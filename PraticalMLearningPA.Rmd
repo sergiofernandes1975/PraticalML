@@ -1,0 +1,120 @@
+---
+fontsize: 8pt
+geometry: margin=0.2in
+output:
+  pdf_document:
+    fig_caption: yes
+    fig_height: 3.6
+    fig_width: 4
+  html_document: default
+---
+Pratical Machine Learning
+======================================
+
+```{r, echo=FALSE}
+library(caret)
+library(rpart)
+library(rpart.plot)
+library(randomForest)
+library(corrplot)
+library(rattle)
+library(RCurl)
+```
+
+## Loading Data
+
+```{r}
+trainingDS  <- read.csv("C:/temp/data/pml-training.csv")
+testingDS  <- read.csv("C:/temp/data/pml-testing.csv")
+dim(trainingDS)
+dim(testingDS)
+```
+
+## Cleaning Data
+Firstly, variables with near zero variance are removed. There are 60 variables that fit this condition and an intermediary data frame of 100 variables is generated. Then, variables with more than 70% of NAs are removed. Final training data has 59 variables. From those, identifiers and timestamp variables are also removed make available only 53 variables to build prediction models.
+
+```{r}
+nzvstat <- nearZeroVar(trainingDS, saveMetrics=TRUE)
+table(nzvstat$nzv)
+trainingDS <- trainingDS[,nzvstat$nzv==FALSE]
+dim(trainingDS)
+
+finalTrain <- trainingDS
+for(i in 1:length(trainingDS)) {
+    if( sum( is.na( trainingDS[, i] ) ) /nrow(trainingDS) >= .7) {
+        for(j in 1:length(finalTrain)) {
+            if( length( grep(names(trainingDS[i]), names(finalTrain)[j]) ) == 1)  {
+                finalTrain <- finalTrain[ , -j]
+            }   
+        } 
+    }
+}
+dim(finalTrain)
+
+finalTrain <- finalTrain[, -which(names(finalTrain) %in% c("X","user_name","raw_timestamp_part_1","raw_timestamp_part_2","cvtd_timestamp","num_window"))]
+```
+
+## Slicing Data
+Now that main data manipulation tasks were applied in order to get a clean dataset, more efficient for training and with lower possibilites of inducting noise through sparsly filled variables, resulting data set is split in two sets. One for training (60% of overall training data) and a testing set with remaining data.
+
+```{r}
+classe <- finalTrain$classe
+set.seed(123) # For reproducibile purpose
+inTrain <- createDataPartition(finalTrain$classe, p=0.60, list=F)
+trainData <- finalTrain[inTrain, ]
+testData <- finalTrain[-inTrain, ]
+dim(trainData)
+dim(testData)
+```
+
+## Predicting using Random Forest
+On this section Random Forest R Models are applied in order to get a final model - modelRf. A cross validation of only 5 was used due to not boost processing time too much and because it's enough to get an excelent accuracy, higher than 99% whose maximum is reached with 2 predictors. We observe a significant decrease of accuracy when more than 27 predictors, although lowest reached accuracy when using 52 predictors is still greater than 98%.
+
+```{r}
+controlRf <- trainControl(method="cv", 5)
+Rf <- train(classe ~ ., data=trainData, method="rf", trControl=controlRf, ntree=250)
+Rf
+plot(Rf)
+```
+
+## Predicting on the Test Data - out of Sample Error
+When applying obtained Random Forest Model to test data we get an accuracy of nearly 100%, with an Out Of Sample Error as small as 0.9%.
+
+```{r}
+predTestData <- predict(Rf, testData)
+confusionMatrix(testData$classe, predTestData)
+
+accuracy <- postResample(predTestData, testData$classe)
+accuracy
+
+OutofSError <- 1 - as.numeric(confusionMatrix(testData$classe, predTestData)$overall[1])
+OutofSError
+```
+
+## Further Predition Models and visualization
+A Decision Tree was built in order to make model results visable and explorable to user. This model provides a good starting point to help understand undisclosed business rules hidden on data. However its accuracy is around 77% much lower than 99% obtained with Random Forest.
+
+```{r}
+Dt <- rpart(classe ~ ., data=trainData, method="class")
+fancyRpartPlot(Dt)
+predTestData <- predict(Dt, testData, type = "class")
+confusionMatrix(predTestData, testData$classe)
+```
+
+## Test Data
+Finally, provided testing data is structured aligned with data set used to train the Random Forest Model by removing not used columns. Then, predition is applied to it and results are written to results datasets to be uploaded to curera.
+
+```{r}
+testingDS <- testingDS[, which(names(testingDS) %in% colnames(finalTrain))]
+
+result <- predict(Rf, testingDS)
+result
+pml_write_files = function(x){
+  n = length(x)
+  for(i in 1:n){
+    filename = paste0("problem_id_",i,".txt")
+    write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+  }
+}
+pml_write_files(result)
+```
